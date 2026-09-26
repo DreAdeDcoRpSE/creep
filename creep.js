@@ -16,7 +16,7 @@
     'use strict';
 
     const SETTINGS = {
-        idleTime: 7000,                 // ms before creeping starts
+        idleTime: 30000,                 // ms before creeping starts
         minLeaveDelay: 0,               // ms
         maxLeaveDelay: 10000,           // letters begin leaving gradually over ~10 seconds
         maxActiveLetters: 1500,            // Maximum number of letters visibly creeping away at the same time.
@@ -161,12 +161,39 @@
         const style = getComputedStyle(parent);
         const chars = [];
 
-        for (let i = 0; i < text.length; i++) {
-            if (/\s/.test(text[i])) continue;
+        // Split text by visible Unicode characters (grapheme clusters) instead
+        // of UTF-16 code units. This keeps emoji, skin-tone modifiers, flags,
+        // ZWJ sequences, etc. together instead of turning them into � symbols.
+        let segments;
+
+        if (typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function') {
+            const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+            segments = Array.from(segmenter.segment(text), part => ({
+                char: part.segment,
+                start: part.index,
+                end: part.index + part.segment.length
+            }));
+        } else {
+            // Fallback: Array.from() at least keeps surrogate-pair emoji intact.
+            segments = [];
+            let offset = 0;
+
+            for (const char of Array.from(text)) {
+                segments.push({
+                    char,
+                    start: offset,
+                    end: offset + char.length
+                });
+                offset += char.length;
+            }
+        }
+
+        for (const segment of segments) {
+            if (/^\s+$/u.test(segment.char)) continue;
 
             const range = document.createRange();
-            range.setStart(node, i);
-            range.setEnd(node, i + 1);
+            range.setStart(node, segment.start);
+            range.setEnd(node, segment.end);
 
             const rects = range.getClientRects();
             if (!rects.length) continue;
@@ -184,7 +211,7 @@
             }
 
             chars.push({
-                char: text[i],
+                char: segment.char,
                 rect: {
                     left: rect.left,
                     top: rect.top,
@@ -194,6 +221,7 @@
                 style
             });
         }
+
         return chars;
     }
 
